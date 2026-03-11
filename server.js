@@ -11,7 +11,7 @@ const fs = require('fs');
 require('dotenv').config();
 const PORT = process.env.PORT || 5000;
 app.use(cors({
-  origin: 'http://localhost:3000',
+  origin: 'https://optijob-ten.vercel.app',
   credentials: true
 }));
 
