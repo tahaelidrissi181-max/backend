@@ -12,6 +12,7 @@ require('dotenv').config();
 const PORT = process.env.PORT || 5000;
 app.use(cors({
   origin: 'https://optijob-ten.vercel.app',
+  //origin: 'http://localhost:3000',
   credentials: true
 }));
 
@@ -28,16 +29,11 @@ const sql = mysql.createPool({
   connectionLimit: 10,
   queueLimit: 0,
 });
-/*{
-  origin:  'https://your-frontend-domain.com',
-  credentials: true
-}*/
 
-// Middleware to parse JSON
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use('/uploads', express.static('uploads'));
@@ -54,7 +50,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowed = ['image/jpeg', 'image/png', 'image/jpg'];
     if (allowed.includes(file.mimetype)) {
@@ -81,7 +77,6 @@ app.post('/ouvriers', upload.single('photo'), async (req, res) => {
       status
     } = req.body;
 
-    // Check email
     if (email) {
       const [existingEmail] = await sql.query(
         'SELECT id, nom_complet FROM ouvriers WHERE email = ?',
@@ -228,7 +223,7 @@ app.get("/me", auth, async (req, res) => {
   try {
     const userId = req.user.userId;
     const rows = await sql.query(
-      "SELECT id,name, email, role, created_at FROM users WHERE id = ?",
+      "SELECT * FROM users WHERE id = ?",
       [userId]
     );
     if (rows.length === 0) {
@@ -250,6 +245,22 @@ app.get('/ouvriers', async (req, res) => {
   try {
     const [rows] = await sql.query(
       'SELECT * FROM ouvriers ORDER BY created_at DESC'
+    );
+    res.json(rows);
+  } catch (error) {
+    console.error('Error fetching workers:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching workers',
+      error: error.message
+    });
+  }
+});
+
+app.get('/activeouvriers', async (req, res) => {
+  try {
+    const [rows] = await sql.query(
+      'SELECT * FROM ouvriers where status="available" ORDER BY created_at DESC'
     );
     res.json(rows);
   } catch (error) {
@@ -430,6 +441,22 @@ app.get('/entreprises', async (req, res) => {
   }
 });
 
+app.get('/activeentreprises', async (req, res) => {
+  try {
+    const [rows] = await sql.query(
+      'SELECT e.*, a.id AS abonnement_id,a.type AS abonnement_type,a.price AS abonnement_price,a.created_at AS abonnement_created_at,a.updated_at AS abonnement_updated_at FROM entreprise e LEFT JOIN abonnement a ON a.id = e.abonnementID where e.status="active" ORDER BY created_at DESC'
+    );
+    res.json(rows);
+  } catch (error) {
+    console.error('Error fetching workers:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching workers',
+      error: error.message
+    });
+  }
+});
+
 app.get('/entreprises/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -491,6 +518,21 @@ app.get('/demandes', async (req, res) => {
   }
 });
 
+app.get('/demandes/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [rows] = await sql.query('SELECT d.id,d.entrepriseID,d.poste,d.competence,d.contrat,d.NumPostes,d.min,d.max,d.status,d.description,d.dateEntretien,d.localEntretien,d.created_at,d.updated_at,e.logo,e.nom,e.phone1,e.phone2,e.location,e.email,e.secteur FROM demandes d JOIN entreprise e ON e.id = d.entrepriseID and d.entrepriseID =? and d.status!="Traité" ORDER BY d.created_at DESC;',[id]);
+    res.json(rows);
+  } catch (error) {
+    console.error('Error fetching workers:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching workers',
+      error: error.message
+    });
+  }
+});
+
 app.get('/demande/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -529,10 +571,59 @@ app.get('/abonnement', async (req, res) => {
   }
 });
 
+app.post('/abonnements', async (req, res) => {
+  const { type, price } = req.body;
+
+  if (!type || !type.trim()) {
+    return res.status(400).json({ message: 'Le type est requis' });
+  }
+  if (price === undefined || isNaN(price) || Number(price) <= 0) {
+    return res.status(400).json({ message: 'Prix invalide' });
+  }
+
+  try {
+    const [result] = await sql.query(
+      'INSERT INTO abonnement (type, price) VALUES (?, ?)',
+      [type.trim(), Number(price)]
+    );
+    const [created] = await sql.query('SELECT * FROM abonnement WHERE id = ?', [result.insertId]);
+    res.status(201).json(created[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+});
+
+app.put('/abonnements/:id', async (req, res) => {
+  const { price } = req.body;
+
+  if (price === undefined || isNaN(price
+  ) || Number(price) <= 0) {
+    return res.status(400).json({ message: 'Prix invalide' });
+  }
+
+  try {
+    const [result] = await sql.query(
+      'UPDATE abonnement SET price = ? WHERE id = ?',
+      [Number(price), req.params.id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Abonnement non trouvé' });
+    }
+
+    const [updated] = await sql.query('SELECT * FROM abonnement WHERE id = ?', [req.params.id]);
+    res.json(updated[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+});
+
 app.post('/login',async (req, res) => {
     const { email, password } = req.body;
     try {
-      const [rows] = await sql.query('SELECT * FROM users WHERE email = ?', [email]);
+      const [rows] = await sql.query('SELECT * FROM users WHERE email = ? and status="active"', [email]);
       if (rows.length === 0) return res.status(401).json({ message: 'Invalid credentials' });
 
       const user = rows[0];
@@ -543,7 +634,7 @@ app.post('/login',async (req, res) => {
       const token = jwt.sign(
         { userId: user.id },
         process.env.JWT_SECRET,
-        { expiresIn: "360m" }
+        { expiresIn: "1d" }
       );
 
       res.json({ message: 'Login successful!', token,user });
@@ -572,12 +663,10 @@ const uploader = multer({
 
 app.post('/entreprises', uploader.fields([{ name: 'logo', maxCount: 1 },{ name: 'contrat', maxCount: 1 }]), async (req, res) => {
   try {
-    const { nom, phone1, phone2, email, location, responsable, type_abonnement, rating, secteur } = req.body;
-
-    // ✅ Vérifier si l'email existe déjà
+    const { nom, phone1, phone2, email, location, responsable, type_abonnement, rating, secteur,password } = req.body;
     if (email) {
       const [existingEmail] = await sql.query(
-        'SELECT id, nom FROM entreprise WHERE email = ?',
+        'SELECT id, name FROM users WHERE email = ?',
         [email]
       );
       
@@ -615,6 +704,18 @@ app.post('/entreprises', uploader.fields([{ name: 'logo', maxCount: 1 },{ name: 
       [nom, phone1, phone2, email, location, responsable, type_abonnement, rating, secteur, logoPath, contratPath]
     );
 
+    const entrepriseID = result.insertId;
+
+    // ✅ Hash password then create linked user
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    await sql.query(
+      `INSERT INTO users 
+      (name, email, password, role, entrepriseID, status) 
+      VALUES (?, ?, ?, 'client', ?, 'active')`,
+      [nom, email, hashedPassword, entrepriseID]
+    );
+
     return res.status(201).json({
       message: 'Entreprise créée avec succès',
       id: result.insertId,
@@ -630,20 +731,35 @@ app.post('/entreprises', uploader.fields([{ name: 'logo', maxCount: 1 },{ name: 
 
 
 app.put('/entreprise/:id', uploader.fields([{ name: 'logo', maxCount: 1 }, { name: 'contrat', maxCount: 1 }]), async (req, res) => {
-  
   const { id } = req.params;
-  const { nom_entreprise, secteur_activite, responsable, localisation, phone1, phone2, email, abonnement, ranking, status } = req.body;
+  const { nom_entreprise,password, secteur_activite, responsable, localisation, phone1, phone2, email, abonnement, ranking, status } = req.body;
 
   try {
-    const [duplicates] = await sql.query(
-      'SELECT id, email, phone1, phone2 FROM entreprise WHERE (email = ? OR phone1 = ? OR phone2 = ?) AND id != ?',
-      [email, phone1, phone1, id]
-    );
-    if (duplicates.length > 0) {
-      const dup = duplicates[0];
-      if (dup.email === email) return res.status(409).json({ field: 'email', message: 'Cet email est déjà utilisé par une autre entreprise.' });
-      if (dup.phone1 === phone1 || dup.phone2 === phone1) return res.status(409).json({ field: 'phone1', message: 'Ce numéro est déjà utilisé par une autre entreprise.' });
-    }
+    // Check email duplicate in entreprise table (exclude current)
+if (email) {
+  const [existingEmail] = await sql.query(
+    'SELECT id FROM entreprise WHERE email = ? AND id != ?',
+    [email, id]
+  );
+  if (existingEmail.length > 0) {
+    return res.status(400).json({ 
+      message: 'Cet email est déjà utilisé par une autre entreprise.',
+      field: 'email'
+    });
+  }
+
+  // Check email duplicate in users table (exclude current user)
+  const [existingUserEmail] = await sql.query(
+    'SELECT id FROM users WHERE email = ? AND entrepriseID != ?',
+    [email, id]
+  );
+  if (existingUserEmail.length > 0) {
+    return res.status(400).json({ 
+      message: 'Cet email est déjà utilisé par un autre utilisateur.',
+      field: 'email'
+    });
+  }
+}
     const [rows] = await sql.query('SELECT * FROM entreprise WHERE id = ?', [id]);
     if (rows.length === 0) return res.status(404).json({ message: 'Entreprise non trouvée' });
     const existing = rows[0];
@@ -694,6 +810,21 @@ contratPath = req.files.contrat[0].path.replace(/\\/g, '/');
         id
       ]
     );
+    // Check if user exists
+    const [row] = await sql.query(
+      'SELECT * FROM users WHERE entrepriseID = ?',
+      [id]
+    );
+    const existingUser = row[0];
+    // If password is provided → hash it
+    let hashedPassword = existingUser.password;
+    if (password && password.trim() !== '') {
+      hashedPassword = await bcrypt.hash(password, 10);
+    }
+    await sql.query(
+      'UPDATE users SET name = ?, email = ?, password = ?, updated_at = NOW() WHERE entrepriseID = ?',
+      [nom_entreprise || existing.nom,email || existing.email, hashedPassword, id]
+    )
 
     const [updated] = await sql.query('SELECT * FROM entreprise WHERE id = ?', [id]);
     return res.status(200).json({ message: 'Entreprise mise à jour avec succès', entreprise: updated[0] });
@@ -762,19 +893,23 @@ app.put('/users/:id', async (req, res) => {
   const { name, email, password, role, status } = req.body;
 
   try {
-    // Check if user exists
     const [rows] = await sql.query(
       'SELECT * FROM users WHERE id = ?',
       [id]
     );
-
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Utilisateur non trouvé' });
     }
-
     const existingUser = rows[0];
-
-    // If password is provided → hash it
+    if (email && email !== existingUser.email) {
+  const [dupEmail] = await sql.query(
+    'SELECT id FROM users WHERE email = ? AND id != ?',
+    [email, id]
+  );
+  if (dupEmail.length > 0) {
+    return res.status(409).json({ message: 'Cet email est déjà utilisé par un autre compte.' });
+  }
+}
     let hashedPassword = existingUser.password;
     if (password && password.trim() !== '') {
       hashedPassword = await bcrypt.hash(password, 10);
@@ -838,6 +973,21 @@ app.get('/reunions', async (req, res) => {
   }
 });
 
+app.get('/reunions/:id', async (req, res) => {
+    const { id } = req.params;
+  try {
+    const [rows] = await sql.query('SELECT d.id,d.entrepriseID,d.poste,d.competence,d.contrat,d.NumPostes,d.min,d.max,d.status,d.description,d.dateEntretien,d.localEntretien,d.reunion,d.created_at,d.updated_at,e.logo,e.nom,e.phone1,e.phone2,e.location,e.email,e.secteur FROM demandes d JOIN entreprise e ON e.id = d.entrepriseID and d.entrepriseID=? and d.status="Traité" ORDER BY d.created_at DESC;',[id]);
+    res.json(rows);
+  } catch (error) {
+    console.error('Error fetching workers:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching workers',
+      error: error.message
+    });
+  }
+});
+
 app.put('/reunion/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -860,40 +1010,23 @@ app.put('/reunion/:id', async (req, res) => {
 app.get('/mise', async (req, res) => {
   try {
     const [rows] = await sql.query(`
-      SELECT 
-        d.id,
-        d.entrepriseID,
-        d.poste,
-        d.competence,
-        d.contrat,
-        d.NumPostes,
-        d.min,
-        d.max,
-        d.status,
-        d.description,
-        d.dateEntretien,
-        d.localEntretien,
-        d.reunion,
-        d.created_at,
-        d.updated_at,
-        e.logo,
-        e.nom,
-        e.phone1,
-        e.phone2,
-        e.location,
-        e.email,
-        e.secteur,
-        COUNT(m.id) AS totalMises
-      FROM demandes d
-      JOIN entreprise e 
-        ON e.id = d.entrepriseID
-      LEFT JOIN mise m 
-        ON m.demandeID = d.id
-      WHERE d.status = "Traité"
-        AND d.reunion = "Traité"
-      GROUP BY d.id
-      ORDER BY d.created_at DESC
-    `);
+      SELECT d.id,d.entrepriseID,d.poste,d.competence,d.contrat,d.NumPostes,d.min,d.max,d.status,d.description,d.dateEntretien,d.localEntretien,d.reunion,d.created_at,d.updated_at,e.logo,e.nom,e.phone1,e.phone2,e.location,e.email,e.secteur,COUNT(m.id) AS totalMises FROM demandes d JOIN entreprise e ON e.id = d.entrepriseID LEFT JOIN mise m ON m.demandeID = d.id WHERE d.status = "Traité" AND d.reunion = "Traité" GROUP BY d.id ORDER BY d.created_at DESC`);
+    res.json(rows);
+  } catch (error) {
+    console.error('Error fetching demandes:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la récupération des demandes',
+      error: error.message
+    });
+  }
+});
+
+app.get('/mise/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [rows] = await sql.query(`
+      SELECT d.id,d.entrepriseID,d.poste,d.competence,d.contrat,d.NumPostes,d.min,d.max,d.status,d.description,d.dateEntretien,d.localEntretien,d.reunion,d.created_at,d.updated_at,e.logo,e.nom,e.phone1,e.phone2,e.location,e.email,e.secteur,COUNT(m.id) AS totalMises FROM demandes d JOIN entreprise e ON e.id = d.entrepriseID LEFT JOIN mise m ON m.demandeID = d.id WHERE d.status = "Traité" AND d.reunion = "Traité" and d.entrepriseID =? GROUP BY d.id ORDER BY d.created_at DESC`,[id]);
     res.json(rows);
   } catch (error) {
     console.error('Error fetching demandes:', error);
@@ -1047,6 +1180,21 @@ app.get('/insc/:id', async (req, res) => {
     res.status(500).json({ success: false, message: 'Erreur serveur', error: error.message });
   }})
 
+app.get('/lastinsc/:id', async (req, res) => {
+      const { id } = req.params;
+  try {
+    const [rows] = await sql.query('SELECT i.id,i.entrepriseID,i.abonnementID,i.month,i.year,i.created_at,i.updated_at,e.id as entid FROM entreprise e LEFT JOIN (SELECT i1.* FROM inscription i1 INNER JOIN (SELECT entrepriseID, MAX(id) AS last_id FROM inscription GROUP BY entrepriseID) latest ON i1.id = latest.last_id) i ON e.id = i.entrepriseID  WHERE i.entrepriseID = ? ORDER BY e.created_at DESC;',[id]);
+    res.json(rows);
+  } catch (error) {
+    console.error('Error fetching workers:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching workers',
+      error: error.message
+    });
+  }
+});
+
 app.delete('/insc/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -1109,6 +1257,31 @@ app.get('/stats', async (req, res) => {
         ) AS inscriptions_limitees`,
       [startDate, endDate, startDate, endDate, startDate, endDate,
        startDate, endDate, startDate, endDate, startDate, endDate]
+    );
+    res.json(counts);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Erreur serveur" });
+  }
+});
+
+app.get('/entrstats', async (req, res) => {
+  try {
+    const { startDate, endDate,id } = req.query;
+
+    const [[counts]] = await sql.query(
+      `SELECT 
+        (SELECT COUNT(*) FROM demandes 
+         WHERE status != 'Traité' AND created_at BETWEEN ? AND ? and entrepriseID =?) AS total_demandes,
+        (SELECT COUNT(*) FROM demandes 
+         WHERE status = 'Traité' AND created_at BETWEEN ? AND ? and entrepriseID =?) AS total_reunions,
+        (SELECT COUNT(m.id) AS total_mise FROM mise m JOIN demandes d ON demandeID = d.id WHERE m.created_at BETWEEN ? AND ? and d.entrepriseID =?) AS total_mise,
+        (SELECT COALESCE(SUM(price), 0) FROM inscription 
+         WHERE created_at BETWEEN ? AND ? and entrepriseID =?) AS total_insc,
+        (SELECT COUNT(*) FROM inscription 
+         WHERE created_at BETWEEN ? AND ? and entrepriseID =?
+        ) AS inscriptions_limitees`,
+      [startDate, endDate,id, startDate, endDate,id, startDate, endDate,id,startDate, endDate,id,startDate, endDate,id]
     );
 
     res.json(counts);
